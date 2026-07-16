@@ -1,5 +1,5 @@
 # Multi-Agent Socratic Tutoring System
-Backend implementation of a multi-agent tutoring system using LangGraph for metacognitive scaffolding and complex knowledge construction.
+Backend implementation of a multi-agent tutoring system using LangGraph for math tutoring, incorporating metacognitive and affective scaffolding via AI Agents.
 ## Current Version
 - `tutor_langgraph_v8.py` (stable version)
 ## Features
