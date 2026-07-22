@@ -12,7 +12,7 @@ git clone https://github.com/11awrence/socratic-tutoring-system.git
 cd socratic-tutoring-system
 pip install -r requirements.txt```
 ## Installation
-python tutor_langgraph_v8.py
+python socratic_tutor.py
 ## Status
 This is an ongoing project. The current version focuses on core multi-agent routing and Socratic tutoring logic.
 ## Future Work
