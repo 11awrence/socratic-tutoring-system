@@ -56,6 +56,8 @@ class TutorState(TypedDict):
     current_problem: Optional[str]
     original_problem: Optional[str]
     debug_logs: List[str]
+    math_tutor_reasoning: Optional[str]
+    metacognitive_strategy: Optional[str]
 
 # ====================== HELPERS ======================
 
@@ -310,6 +312,8 @@ Respond with pure JSON only:
 
 
 def math_tutor_node(state: TutorState):
+    print("=== ENTERED MATH TUTOR NODE ===")
+    print("Instruction from Orchestrator:", state.get("orchestrator_instruction"))
     history_str = "\n".join(state["history"][-6:])
     prompt = f"""You are the Math Content Assassin. PURE SURGICAL CONTENT FOCUS ONLY. 
 
@@ -330,6 +334,7 @@ Output ONLY this exact format:
 Gap: [one sentence]
 Next content focus: [one sentence]"""
     message = run_mlx(MATH_TUTOR_MODEL, prompt, 400)
+    print("MathTutor raw output:", message[:200] if message else "EMPTY")
     return {"math_tutor_reasoning": message}
 
 def metacognitive_node(state: TutorState):
@@ -354,26 +359,32 @@ EVALUATE against the current_problem.
 Be direct and honest in your judgment. Do not be overly gentle.
 
 Output ONLY the message to the student."""
-    message = run_mlx(METACOGNITIVE_MODEL, prompt, 350)
+    message = run_mlx(ORCHESTRATOR_MODEL, prompt, 400)
     return {"metacognitive_strategy": message}
 
 def final_response_node(state: TutorState):
     reflection_count = state.get("reflection_count", 0)
     close_msg = state.get("final_response", "")
 
-    # Always force clean close once we reach 2 reflections (orchestrator hard close or normal path)
+    # Early hard close
     if reflection_count >= 2 or "Want to try another problem" in close_msg:
         final = close_msg or "Great job! You solved it. Want to try another problem?"
         print("System:", final)
         return {
             "final_response": final,
             "reflection_count": reflection_count,
-            "math_tutor_reasoning": "",
-            "metacognitive_strategy": "",
             "next_agent": None,
+            "math_tutor_reasoning": state.get("math_tutor_reasoning"),
+            "metacognitive_strategy": state.get("metacognitive_strategy"),
         }
-    if state.get("math_tutor_reasoning") or state.get("metacognitive_strategy"):
-        specialist_output = state.get("math_tutor_reasoning") or state.get("metacognitive_strategy")
+
+    specialist_output = (
+        state.get("math_tutor_reasoning")
+        or state.get("metacognitive_strategy")
+        or ""
+    )
+
+    if specialist_output:
         history_str = "\n".join(state["history"][-8:])
         prompt = f"""Polish into EXACTLY ONE short student message (1-2 sentences).
 
@@ -398,17 +409,18 @@ NEVER use $, \\(, \\[, or any LaTeX/math formatting. Write everything in plain t
 If any LaTeX appears, you must rewrite the entire response in plain text before outputting.
 
 Output ONLY the polished message."""
-        final = run_mlx(ORCHESTRATOR_MODEL, prompt, 400)
+        try: 
+            final = run_mlx(ORCHESTRATOR_MODEL, prompt, 400)
+            #final = run_mlx(AFFECTIVE_MODEL, prompt, 300)
+        except Exception as e:
+            print(f"[FinalResponse] polishing failed: {e}")
+            final = ""
     else:
         final = state.get("final_response", "Let's continue.")
 
-    old_count = state.get("reflection_count", 0)
-    next_agent_at_final = state.get("next_agent")
-    new_count = old_count
-    if next_agent_at_final == "Metacognitive":
-        new_count += 1
-
-    log_debug(state, f"[FinalResponse DEBUG] next_agent={next_agent_at_final}, old_count={old_count}, new_count={new_count}")
+    # Fallback if polishing returned nothing useful
+    if not final or not str(final).strip():
+        final = specialist_output or "Let's continue."
 
     # Final LaTeX safety net (expanded to catch more leakage variants)
     import re
@@ -419,25 +431,26 @@ Output ONLY the polished message."""
     final = re.sub(r'\\[a-zA-Z]+\{[^}]*\}', '', final)
     final = re.sub(r'\\\[.*?\\\]', '', final, flags=re.DOTALL)
 
+    old_count = state.get("reflection_count", 0)
+    next_agent_at_final = state.get("next_agent")
+    new_count = old_count + 1 if next_agent_at_final == "Metacognitive" else old_count
+
+    log_debug(state, f"[FinalResponse DEBUG] next_agent={next_agent_at_final}, old_count={old_count}, new_count={new_count}")
     print("System:", final)
 
-    if next_agent_at_final == "Metacognitive":
-        state["history"].append(f"System (Meta): {final}")
-    else: 
-        state["history"].append(f"System: {final}")
+    # Update history
+    prefix = "System (Meta): " if next_agent_at_final == "Metacognitive" else "System: "
+    state["history"].append(f"{prefix}{final}")
     if len(state["history"]) > 8:
         state["history"] = state["history"][-8:]
 
-    # Force clean close when reflection loop is done (prevents long summaries and extra meta)
-    if old_count >= 2 or next_agent_at_final == "FinalResponse":
-        final = "Great job! You solved it. Want to try another problem?"
 
     return {
         "final_response": final,
         "reflection_count": new_count,
-        "math_tutor_reasoning": "",
-        "metacognitive_strategy": "",
         "next_agent": None,
+        "math_tutor_reasoning": state.get("math_tutor_reasoning"),
+        "metacognitive_strategy": state.get("metacognitive_strategy"),
     }
 
 # ====================== GRAPH ======================
@@ -486,6 +499,13 @@ def process_student_turn(current_state: dict, user_input: str) -> dict:
     
     # Collect debug logs
     debug_logs = current_state.get("debug_logs", [])
+
+    # Temporarily print
+    print("=== DEBUG RETURN ===")
+    print("final_response:", current_state.get("final_response"))
+    print("math_tutor_reasoning:", current_state.get("math_tutor_reasoning"))
+    print("next_agent:", current_state.get("next_agent"))
+    print("====================")
     
     return {
         "response": current_state.get("final_response", ""),
@@ -497,6 +517,9 @@ def process_student_turn(current_state: dict, user_input: str) -> dict:
         "debug_logs": debug_logs,
         "current_problem": current_state.get("current_problem"),
         "history": current_state.get("history", []),
+        "math_tutor_reasoning": current_state.get("math_tutor_reasoning"),
+        "metacognitive_strategy": current_state.get("metacognitive_strategy"),
+        "state": current_state,
     }
 
 if __name__ == "__main__":
