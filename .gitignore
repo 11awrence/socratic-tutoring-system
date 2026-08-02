@@ -1,10 +1,27 @@
+# Python
 __pycache__/
 *.py[cod]
-*$py.class
-.env
-.venv
+*.pyo
+*.pyd
+.Python
+.chainlit/
+
+# Virtual environments
 venv/
-ENV/
-.ipynb_checkpoints/
+.venv/
+env/
+mlx_env/
+tutor_env/
+chainlit_env/
+
+# Local / secret files
+.env
+.env.*
+*.local
+
+# OS
 .DS_Store
-*.log
+Thumbs.db
+
+# Project-specific
+chainlit.md
