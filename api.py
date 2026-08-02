@@ -1,13 +1,13 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
-from socratic_tutor import process_student_turn  # your current working file
+from socratic_tutor import process_student_turn  
 
 app = FastAPI(title="Multi-Agent Math Tutor API")
 
 class TurnRequest(BaseModel):
     student_input: str
-    state: Dict[str, Any]          # full current state from the client
+    state: Dict[str, Any]        
 
 class TurnResponse(BaseModel):
     response: str
@@ -18,8 +18,7 @@ class TurnResponse(BaseModel):
     debug_logs: List[str]
     current_problem: Optional[str]
     history: List[str]
-    # include any other keys you need
-    state: Dict[str, Any]          # return the updated state
+    state: Dict[str, Any]       
 
 
 # create POST http://localhost:8000/turn
