@@ -30,7 +30,7 @@ source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-> blockquote Note: This project uses local MLX models. Make sure the required models are available on your machine and that you are running on Apple Silicon (or adjust the model loading code accordingly).
+> Note: This project uses local MLX models. Make sure the required models are available on your machine and that you are running on Apple Silicon (or adjust the model loading code accordingly).
 
 ## Running the System
 You need two terminals:
