@@ -1,0 +1,38 @@
+site_name: How far can a multi-agent math tutor go with prompting only?
+site_description: A prompt-driven multi-agent Socratic tutoring system built with LangGraph
+site_author: 11awrence
+
+theme:
+  name: material
+  palette:
+    - scheme: slate
+      primary: indigo
+      accent: teal
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+    - scheme: default
+      primary: indigo
+      accent: teal
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+  features:
+    - navigation.sections
+    - navigation.top
+    - content.code.copy
+
+nav:
+  - Home: index.md
+  - Architecture: architecture.md
+  - How it Works: how-it-works.md
+  - Limitations: limitations.md
+  - Future Work: future-work.md
+  - Setup: setup.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight
+  - tables
