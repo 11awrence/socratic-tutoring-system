@@ -3,6 +3,11 @@
 Full-stack multi-agent math tutoring system built with LangGraph.  
 It combines Socratic dialogue, metacognitive reflection, and lightweight affective scaffolding.
 
+## Documentation
+
+Full project documentation:  
+https://11awrence.github.io/socratic-tutoring-system/
+
 ## Current Version
 
 - `socratic_tutor.py` — core LangGraph multi-agent backend
