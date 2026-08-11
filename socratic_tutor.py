@@ -8,18 +8,56 @@ from langgraph.graph import StateGraph, END
 from mlx_lm import load, generate
 from mlx_lm.sample_utils import make_sampler
 
+import sympy as sp
+from sympy.parsing.sympy_parser import parse_expr
+
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
+import mlx.core as mx
+SEED = int(os.getenv("SEED", "42"))
+mx.random.seed(SEED)
+
 # ====================== MODELS ======================
 # Heavy agents on Qwen3.5-122B class (native API, thinking disabled)
-ORCHESTRATOR_MODEL = "/Users/lenaaoyama/qwen3.5-122b"
-MATH_TUTOR_MODEL = "/Users/lenaaoyama/qwen3.5-122b"
-METACOGNITIVE_MODEL = "/Users/lenaaoyama/qwen3.5-122b"
+ORCHESTRATOR_MODEL = os.getenv("ORCHESTRATOR_MODEL")
+MATH_TUTOR_MODEL   = os.getenv("MATH_TUTOR_MODEL", ORCHESTRATOR_MODEL)
+METACOGNITIVE_MODEL = os.getenv("METACOGNITIVE_MODEL", ORCHESTRATOR_MODEL)
 
 # Affective stays light
-AFFECTIVE_MODEL = "/Users/lenaaoyama/qwen2.5-3b"
+AFFECTIVE_MODEL    = os.getenv("AFFECTIVE_MODEL")
+
+if not ORCHESTRATOR_MODEL or not AFFECTIVE_MODEL:
+    raise ValueError("ORCHESTRATOR_MODEL and AFFECTIVE_MODEL must be set in .env")
 
 @functools.lru_cache(maxsize=4)
 def get_model_tokenizer(model_path: str):
     return load(model_path)
+
+TEMPERATURE = float(os.getenv("TEMPERATURE", "0.7"))
+TOP_P = float(os.getenv("TOP_P", "0.9"))
+
+PROVIDER = os.getenv("PROVIDER", "mlx").lower()
+
+def generate_response(model_path: str, prompt: str, max_tokens: int = 600) -> str:
+    if PROVIDER == "mlx":
+        return run_mlx(model_path, prompt, max_tokens)
+
+    elif PROVIDER == "openai":
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise ValueError(
+                "PROVIDER=openai but OPENAI_API_KEY is not set in .env"
+            )
+        # call OpenAI here
+        ...
+
+    elif PROVIDER == "mock":
+        return "Let's think step by step. What part of the problem are you working on right now?"
+
+    else:
+        raise ValueError(f"Unknown PROVIDER: {PROVIDER}")
 
 def run_mlx(model_path: str, prompt: str, max_tokens=600) -> str:
     model, tokenizer = get_model_tokenizer(model_path)
@@ -30,7 +68,7 @@ def run_mlx(model_path: str, prompt: str, max_tokens=600) -> str:
         enable_thinking=False
     )
 
-    sampler = make_sampler(temp=0.7, top_p=0.9)
+    sampler = make_sampler(temp=TEMPERATURE, top_p=TOP_P)
     response = generate(
         model, 
         tokenizer, 
@@ -58,15 +96,42 @@ class TutorState(TypedDict):
     debug_logs: List[str]
     math_tutor_reasoning: Optional[str]
     metacognitive_strategy: Optional[str]
+    verification: Optional[dict]
 
 # ====================== HELPERS ======================
+def extract_json(text: str) -> dict | None:
+    """More robust JSON extraction. Returns None on failure."""
+    if not text:
+        return None
+
+    # First try direct parse (ideal case)
+    try:
+        return json.loads(text.strip())
+    except Exception:
+        pass
+
+    # Fallback: find the first {...} block
+    match = re.search(r'\{.*\}', text, re.DOTALL)
+    if not match:
+        return None
+
+    candidate = match.group(0)
+    try:
+        return json.loads(candidate)
+    except Exception:
+        # Last resort: try to clean common trailing commas / markdown
+        cleaned = re.sub(r',\s*}', '}', candidate)
+        cleaned = re.sub(r',\s*]', ']', cleaned)
+        try:
+            return json.loads(cleaned)
+        except Exception:
+            return None
 
 def log_debug(state: dict, message: str):
     if "debug_logs" not in state:
         state["debug_logs"] = []
     state["debug_logs"].append(message)
     print(message)  # Keep printing for terminal during testing
-
 
 def get_synthetic_emotion_and_suggestion(student_input: str, problem_solved: bool, reflection_count: int) -> tuple[str, str]:
     text = student_input.lower()
@@ -79,6 +144,101 @@ def get_synthetic_emotion_and_suggestion(student_input: str, problem_solved: boo
     else:
         return "neutral", "Neutral. Normal guided explanation."
 
+def verify_math_step(
+    current_problem: str | None,
+    student_input: str,
+    history: list[str],
+) -> dict:
+    """
+    Deterministic mathematical verification using SymPy.
+    Returns a structured signal. Never reveals the answer to the student.
+    """
+    result = {
+        "parseable": False,
+        "step_valid": None,
+        "error_type": None,
+        "equivalent_to_target": None,
+        "problem_solved": False,
+        "verified_answer": None,
+    }
+
+    if not current_problem or not student_input:
+        return result
+
+    # -------------------------------------------------
+    # 1. Try to extract a candidate final answer
+    # -------------------------------------------------
+    import re
+    text = student_input.strip().lower()
+
+    # Common final-answer patterns
+    patterns = [
+        r"(?:final answer|the answer is|answer is|result is|equals|=)\s*([-+]?\d*\.?\d+(?:/\d+)?)",
+        r"(?:final answer|the answer is|answer is|result is)\s*([-+]?\d+/\d+)",
+        r"([-+]?\d+\s*/\s*\d+)\s*$",
+        r"([-+]?\d+\.?\d*)\s*$",
+    ]
+
+    candidate = None
+    for pat in patterns:
+        m = re.search(pat, text)
+        if m:
+            candidate = m.group(1).replace(" ", "")
+            break
+
+    if candidate is None:
+        # No clear final answer detected → not solved yet
+        return result
+
+    # -------------------------------------------------
+    # 2. Parse candidate with SymPy
+    # -------------------------------------------------
+    try:
+        student_expr = sp.sympify(candidate)
+    except Exception:
+        result["error_type"] = "unparseable_answer"
+        return result
+
+    result["parseable"] = True
+    result["verified_answer"] = str(student_expr)
+
+    # -------------------------------------------------
+    # 3. Try to evaluate the original problem
+    # -------------------------------------------------
+    try:
+        # Very simple cleaning – remove common English words
+        problem_clean = re.sub(
+            r"(solve|simplify|calculate|what is|find|the value of|=|\?)",
+            "",
+            current_problem,
+            flags=re.IGNORECASE,
+        ).strip()
+
+        target_expr = sp.sympify(problem_clean)
+        target_simplified = sp.simplify(target_expr)
+    except Exception:
+        # Could not parse the original problem → give up gracefully
+        result["error_type"] = "problem_unparseable"
+        return result
+
+    # -------------------------------------------------
+    # 4. Compare
+    # -------------------------------------------------
+    try:
+        if sp.simplify(student_expr - target_simplified) == 0:
+            result["equivalent_to_target"] = True
+            result["problem_solved"] = True
+            result["step_valid"] = True
+            result["error_type"] = None
+        else:
+            result["equivalent_to_target"] = False
+            result["problem_solved"] = False
+            result["step_valid"] = False
+            result["error_type"] = "incorrect_final_answer"
+    except Exception:
+        result["error_type"] = "comparison_failed"
+
+    return result
 
 # ====================== NODES ======================
 
@@ -109,7 +269,34 @@ def state_manager_node(state: TutorState):
         state["problem_solved"] = False
         state["reflection_count"] = 0
         state["history"] = [f"Student: {state['student_input']}"]
+        state["progress"] = "beginning"
+        state["known_mistake"] = None
         return state
+
+    if state.get("problem_solved"):
+        state["progress"] = "solved"
+    elif state.get("reflection_count", 0) > 0:
+        state["progress"] = "reflecting"
+    elif len(state.get("history", [])) > 2:
+        state["progress"] = "in_progress"
+    else:
+        state["progress"] = "beginning"
+
+    return state
+
+def verification_node(state: TutorState):
+    state["verification"] = verify_math_step(
+        state.get("current_problem"),
+        state["student_input"],
+        state.get("history", [])
+    )
+    verification = state.get("verification") or {}
+    error_type = verification.get("error_type")
+
+    if error_type and error_type not in ("none", None):
+        state["known_mistake"] = error_type
+    elif verification.get("problem_solved"):
+        state["known_mistake"] = None
 
     return state
 
@@ -117,7 +304,7 @@ def affective_node(state: TutorState):
     student_input = state["student_input"]
     
     try:
-        prompt = f"""You are a sharp, no-bullshit emotion detector for a Socratic math tutor.
+        prompt = f"""You are a sharp, Learner Support Signal Agent for a Socratic math tutor.
 
 Student just said: "{student_input}"
 
@@ -132,11 +319,11 @@ Respond ONLY with valid JSON in this exact format:
 
 JSON:"""
         
-        response = run_mlx(AFFECTIVE_MODEL, prompt, max_tokens=80)
+        response = generate_response(AFFECTIVE_MODEL, prompt, max_tokens=80)
         
-        json_match = re.search(r'\{.*\}', response, re.DOTALL)
-        if json_match:
-            affective_data = json.loads(json_match.group(0))
+        affective_data = extract_json(response)
+        
+        if affective_data:
             state["student_emotion"] = affective_data.get("emotion", "neutral")
             state["affective_suggestion"] = affective_data.get("suggestion", "")
             log_debug(state, f"[Affective DEBUG] LLM SUCCESS → emotion={state['student_emotion']}, suggestion=\"{state['affective_suggestion']}\"")
@@ -271,38 +458,13 @@ Respond with pure JSON only:
   "final_response": "",
   "problem_solved": true/false
 }}"""
-    decision = run_mlx(ORCHESTRATOR_MODEL, prompt, 600)
+    decision = generate_response(ORCHESTRATOR_MODEL, prompt, 600)
     log_debug(state, f"\nOrchestrator (plan): {decision}")
 
-    json_match = re.search(r'\{.*\}', decision, re.DOTALL)
-    json_str = json_match.group(0) if json_match else decision.strip()
-    try:
-        d = json.loads(json_str)
-        result = {
-            "orchestrator_instruction": d.get("instruction", ""),
-            "next_agent": d.get("next_agent", "MathTutor"),
-            "final_response": d.get("final_response", "Let's continue."),
-            "problem_solved": d.get("problem_solved", False),
-        }
+    d = extract_json(decision)
 
-
-        # Hard force meta reflection on first solve (count == 0)
-        if result.get("problem_solved") and current_count == 0:
-            result["next_agent"] = "Metacognitive"
-            result["instruction"] = "Ask ONE sharp reflection question on the key insight from solving this problem."
-
-        # Hard force evaluation when count==1
-        if current_solved and current_count == 1:
-            result["next_agent"] = "Metacognitive"
-            result["instruction"] = "EVALUATE the student's answer to the previous reflection. Point out misconceptions or give short summary + general strategy."
-            result["problem_solved"] = True
-
-        if result.get("problem_solved") and current_count >= 2:
-            result["next_agent"] = "FinalResponse"
-            result["final_response"] = "Great job! Want to try another problem?"
-        return result
-    except Exception as e:
-        log_debug(state, f"JSON parse error: {e}")
+    if d is None:
+        log_debug(state, "JSON parse error")
         return {
             "orchestrator_instruction": "Guide the student with one step",
             "next_agent": "MathTutor",
@@ -310,12 +472,35 @@ Respond with pure JSON only:
             "problem_solved": False,
         }
 
+    result = {
+        "orchestrator_instruction": d.get("instruction", ""),
+        "next_agent": d.get("next_agent", "MathTutor"),
+        "final_response": d.get("final_response", "Let's continue."),
+        "problem_solved": d.get("problem_solved", False),
+    }
+
+    # Hard force meta reflection on first solve (count == 0)
+    if result.get("problem_solved") and current_count == 0:
+        result["next_agent"] = "Metacognitive"
+        result["instruction"] = "Ask ONE sharp reflection question on the key insight from solving this problem."
+
+        # Hard force evaluation when count==1
+    if current_solved and current_count == 1:
+        result["next_agent"] = "Metacognitive"
+        result["instruction"] = "EVALUATE the student's answer to the previous reflection. Point out misconceptions or give short summary + general strategy."
+    result["problem_solved"] = True
+
+    if result.get("problem_solved") and current_count >= 2:
+        result["next_agent"] = "FinalResponse"
+        result["final_response"] = "Great job! Want to try another problem?"
+    return result
+
 
 def math_tutor_node(state: TutorState):
     print("=== ENTERED MATH TUTOR NODE ===")
     print("Instruction from Orchestrator:", state.get("orchestrator_instruction"))
     history_str = "\n".join(state["history"][-6:])
-    prompt = f"""You are the Math Content Assassin. PURE SURGICAL CONTENT FOCUS ONLY. 
+    prompt = f"""You are the Mathematical Reasoning Agent. PURE SURGICAL CONTENT FOCUS ONLY. 
 
 CURRENT PROBLEM (NEVER CHANGE THIS — the student must finish the FULL original expression):
 {state.get('current_problem', 'None')}
@@ -333,7 +518,7 @@ Output ONLY this exact format:
 
 Gap: [one sentence]
 Next content focus: [one sentence]"""
-    message = run_mlx(MATH_TUTOR_MODEL, prompt, 400)
+    message = generate_response(MATH_TUTOR_MODEL, prompt, 400)
     print("MathTutor raw output:", message[:200] if message else "EMPTY")
     return {"math_tutor_reasoning": message}
 
@@ -341,7 +526,7 @@ def metacognitive_node(state: TutorState):
     history_str = "\n".join(state["history"][-6:])
     log_debug(state, f"[Meta DEBUG] History last 3 entries: {state['history'][-3:]}")
     log_debug(state, f"[Meta DEBUG] Previous meta question in history? {'(Meta)' in ' '.join(state['history'][-2:]) if len(state['history']) >= 2 else False}")
-    prompt = f"""You are the Vicious Socratic Drill Sergeant.
+    prompt = f"""You are the Metacognitive Support Agent.
 
 CURRENT PROBLEM (NEVER CHANGE THIS): {state.get('current_problem', 'None')}
 
@@ -359,7 +544,7 @@ EVALUATE against the current_problem.
 Be direct and honest in your judgment. Do not be overly gentle.
 
 Output ONLY the message to the student."""
-    message = run_mlx(ORCHESTRATOR_MODEL, prompt, 400)
+    message = generate_response(ORCHESTRATOR_MODEL, prompt, 400)
     return {"metacognitive_strategy": message}
 
 def final_response_node(state: TutorState):
@@ -410,8 +595,8 @@ If any LaTeX appears, you must rewrite the entire response in plain text before 
 
 Output ONLY the polished message."""
         try: 
-            final = run_mlx(ORCHESTRATOR_MODEL, prompt, 400)
-            #final = run_mlx(AFFECTIVE_MODEL, prompt, 300)
+            final = generate_response(ORCHESTRATOR_MODEL, prompt, 400)
+            #final = generate_response(AFFECTIVE_MODEL, prompt, 300)
         except Exception as e:
             print(f"[FinalResponse] polishing failed: {e}")
             final = ""
@@ -456,6 +641,7 @@ Output ONLY the polished message."""
 # ====================== GRAPH ======================
 workflow = StateGraph(TutorState)
 workflow.add_node("StateManager", state_manager_node)
+workflow.add_node("Verification", verification_node)
 workflow.add_node("Affective", affective_node)
 workflow.add_node("Orchestrator", orchestrator_node)
 workflow.add_node("MathTutor", math_tutor_node)
@@ -463,7 +649,8 @@ workflow.add_node("Metacognitive", metacognitive_node)
 workflow.add_node("FinalResponse", final_response_node)
 
 workflow.set_entry_point("StateManager")
-workflow.add_edge("StateManager", "Affective")
+workflow.add_edge("StateManager", "Verification")
+workflow.add_edge("Verification", "Affective")
 workflow.add_edge("Affective", "Orchestrator")
 
 workflow.add_conditional_edges(
