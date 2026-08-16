@@ -488,7 +488,7 @@ Respond with pure JSON only:
     if current_solved and current_count == 1:
         result["next_agent"] = "Metacognitive"
         result["instruction"] = "EVALUATE the student's answer to the previous reflection. Point out misconceptions or give short summary + general strategy."
-    result["problem_solved"] = True
+        result["problem_solved"] = True
 
     if result.get("problem_solved") and current_count >= 2:
         result["next_agent"] = "FinalResponse"
