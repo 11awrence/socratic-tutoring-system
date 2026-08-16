@@ -52,7 +52,7 @@ async def open_details_sidebar(state: dict, result: dict = None, show_debug: boo
 
     orch = "-"
     logs = (result or {}).get("debug_logs") or state.get("debug_logs") or []
-    for log in logs:
+    for log in reversed(logs):
         if "Orchestrator (plan)" in log or '"next_agent"' in log:
             orch = log[:450] + ("..." if len(log) > 450 else "")
             break
