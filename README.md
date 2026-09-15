@@ -10,11 +10,13 @@ flowchart TD
     A[Student] --> B[Chainlit UI]
     B --> C[FastAPI]
     C --> D[LangGraph Backend<br/>socratic_tutor.py]
-    D --> E[SymPy Verification]
-    E --> F[Orchestrator]
-    F --> G[MathTutor]
-    F --> H[Metacognitive Agent]
-    F --> I[Affective Agent]
+    D --> E[StateManager]
+    E --> F[SymPy Verification]
+    F --> G[Affective Agent]
+    G --> H[Orchestrator]
+    H --> I[MathTutor]
+    H --> J[Metacognitive Agent]
+    I & J --> K[FinalResponse]
 ```
 ### Interface
 ![Main chat interface](docs/assets/main_chat.png)
