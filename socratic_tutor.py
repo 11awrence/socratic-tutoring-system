@@ -3,6 +3,7 @@ import functools
 import re
 import json
 from typing import TypedDict, List, Optional
+from datetime import datetime, timezone
 
 from langgraph.graph import StateGraph, END
 from mlx_lm import load, generate
@@ -15,6 +16,9 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 
+LOG_DIR = "logs"
+os.makedirs(LOG_DIR, exist_ok=True)
+
 import mlx.core as mx
 SEED = int(os.getenv("SEED", "42"))
 mx.random.seed(SEED)
@@ -26,7 +30,7 @@ MATH_TUTOR_MODEL   = os.getenv("MATH_TUTOR_MODEL", ORCHESTRATOR_MODEL)
 METACOGNITIVE_MODEL = os.getenv("METACOGNITIVE_MODEL", ORCHESTRATOR_MODEL)
 
 # Affective stays light
-AFFECTIVE_MODEL    = os.getenv("AFFECTIVE_MODEL")
+AFFECTIVE_MODEL = os.getenv("AFFECTIVE_MODEL")
 
 if not ORCHESTRATOR_MODEL or not AFFECTIVE_MODEL:
     raise ValueError("ORCHESTRATOR_MODEL and AFFECTIVE_MODEL must be set in .env")
@@ -39,6 +43,9 @@ TEMPERATURE = float(os.getenv("TEMPERATURE", "0.7"))
 TOP_P = float(os.getenv("TOP_P", "0.9"))
 
 PROVIDER = os.getenv("PROVIDER", "mlx").lower()
+
+ABLATION_MODE = os.getenv("ABLATION_MODE", "multi_verifier").lower()
+# allowed: "single" | "multi" | "multi_verifier"
 
 def generate_response(model_path: str, prompt: str, max_tokens: int = 600) -> str:
     if PROVIDER == "mlx":
@@ -132,6 +139,53 @@ def log_debug(state: dict, message: str):
         state["debug_logs"] = []
     state["debug_logs"].append(message)
     print(message)  # Keep printing for terminal during testing
+
+def strip_latex(text: str) -> str:
+    if not text:
+        return text
+    text = re.sub(r'\$.*?\$', '', text)
+    text = re.sub(r'\\\(.*?\\\)', '', text)
+    text = re.sub(r'\\\[.*?\\\]', '', text, flags=re.DOTALL)
+    text = re.sub(r'\\frac\{[^}]*\}\{[^}]*\}', '', text)
+    text = re.sub(r'\\[a-zA-Z]+\{[^}]*\}', '', text)
+    text = re.sub(r'\\[a-zA-Z]+', '', text)
+    return text.strip()
+
+def log_turn(
+    state: dict,
+    user_input: str,
+    response: str,
+    trajectory_id: str = "interactive",
+):
+    """
+    Append one turn record to logs/{ablation_mode}/{trajectory_id}.jsonl
+    """
+    mode = ABLATION_MODE
+    mode_dir = os.path.join(LOG_DIR, mode)
+    os.makedirs(mode_dir, exist_ok=True)
+
+    path = os.path.join(mode_dir, f"{trajectory_id}.jsonl")
+
+    record = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "ablation_mode": mode,
+        "seed": SEED,
+        "trajectory_id": trajectory_id,
+        "student_input": user_input,
+        "final_response": response,
+        "problem_solved": state.get("problem_solved", False),
+        "reflection_count": state.get("reflection_count", 0),
+        "next_agent": state.get("next_agent"),
+        "emotion": state.get("student_emotion"),
+        "affective_suggestion": state.get("affective_suggestion"),
+        "verification": state.get("verification"),
+        "orchestrator_instruction": state.get("orchestrator_instruction"),
+        "current_problem": state.get("current_problem"),
+    }
+
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
 
 def get_synthetic_emotion_and_suggestion(student_input: str, problem_solved: bool, reflection_count: int) -> tuple[str, str]:
     text = student_input.lower()
@@ -285,6 +339,18 @@ def state_manager_node(state: TutorState):
     return state
 
 def verification_node(state: TutorState):
+    if ABLATION_MODE != "multi_verifier":
+        state["verification"] = {
+            "parseable": False,
+            "step_valid": None,
+            "error_type": None,
+            "equivalent_to_target": None,
+            "problem_solved": False,
+            "verified_answer": None,
+        }
+        log_debug(state, "[Verification] skipped (mode != multi_verifier)")
+        return state
+
     state["verification"] = verify_math_step(
         state.get("current_problem"),
         state["student_input"],
@@ -298,6 +364,7 @@ def verification_node(state: TutorState):
     elif verification.get("problem_solved"):
         state["known_mistake"] = None
 
+    log_debug(state, "[Verification] SymPy check executed")
     return state
 
 def affective_node(state: TutorState):
@@ -554,7 +621,6 @@ def final_response_node(state: TutorState):
     # Early hard close
     if reflection_count >= 2 or "Want to try another problem" in close_msg:
         final = close_msg or "Great job! You solved it. Want to try another problem?"
-        print("System:", final)
         return {
             "final_response": final,
             "reflection_count": reflection_count,
@@ -608,20 +674,13 @@ Output ONLY the polished message."""
         final = specialist_output or "Let's continue."
 
     # Final LaTeX safety net (expanded to catch more leakage variants)
-    import re
-    final = re.sub(r'\$.*?\$', '', final)
-    final = re.sub(r'\\\(.*?\\\)', '', final)
-    final = re.sub(r'\\\[.*?\\\]', '', final)
-    final = re.sub(r'\\frac\{[^}]*\}\{[^}]*\}', '', final)
-    final = re.sub(r'\\[a-zA-Z]+\{[^}]*\}', '', final)
-    final = re.sub(r'\\\[.*?\\\]', '', final, flags=re.DOTALL)
+    final = strip_latex(final)
 
     old_count = state.get("reflection_count", 0)
     next_agent_at_final = state.get("next_agent")
     new_count = old_count + 1 if next_agent_at_final == "Metacognitive" else old_count
 
     log_debug(state, f"[FinalResponse DEBUG] next_agent={next_agent_at_final}, old_count={old_count}, new_count={new_count}")
-    print("System:", final)
 
     # Update history
     prefix = "System (Meta): " if next_agent_at_final == "Metacognitive" else "System: "
@@ -678,21 +737,27 @@ def process_student_turn(current_state: dict, user_input: str) -> dict:
     Clean wrapper around the LangGraph.
     Returns structured output for the UI.
     """
+    print(f"[MODE] ABLATION_MODE={ABLATION_MODE}")
+
     current_state["student_input"] = user_input
     
-    # Run the graph
-    result = graph.invoke(current_state)
-    current_state.update(result)
+    if ABLATION_MODE == "single":
+        result = run_single_agent(current_state, user_input)
+        current_state.update(result)
+    else:
+        # Run the graph
+        result = graph.invoke(current_state)
+        current_state.update(result)
     
     # Collect debug logs
     debug_logs = current_state.get("debug_logs", [])
 
-    # Temporarily print
-    print("=== DEBUG RETURN ===")
-    print("final_response:", current_state.get("final_response"))
-    print("math_tutor_reasoning:", current_state.get("math_tutor_reasoning"))
-    print("next_agent:", current_state.get("next_agent"))
-    print("====================")
+    log_turn(
+        current_state,
+        user_input,
+        current_state.get("final_response", ""),
+        trajectory_id=current_state.get("trajectory_id", "interactive"),
+    )
     
     return {
         "response": current_state.get("final_response", ""),
@@ -709,19 +774,156 @@ def process_student_turn(current_state: dict, user_input: str) -> dict:
         "state": current_state,
     }
 
+def run_single_agent(state: dict, user_input: str) -> dict:
+    """
+    Single-agent baseline.
+    One compound prompt. No agent switching. No SymPy verifier.
+    Uses the same two-reflection limit after solve as the multi-agent system.
+    """
+    # --- basic state bookkeeping ---
+    if "history" not in state or state["history"] is None:
+        state["history"] = []
+    state["history"].append(f"Student: {user_input}")
+    if len(state["history"]) > 8:
+        state["history"] = state["history"][-8:]
+
+    # simple new-problem detection (same spirit as multi-agent)
+    if not state.get("current_problem") or len(user_input) > 20:
+        # very light heuristic; can be improved later
+        if any(p in user_input.lower() for p in ["solve", "calculate", "simplify", "what is", "find"]):
+            state["current_problem"] = user_input
+            state["problem_solved"] = False
+            state["reflection_count"] = 0
+
+    history_str = "\n".join(state["history"][-6:])
+    current_problem = state.get("current_problem", "None")
+    solved = state.get("problem_solved", False)
+    reflection_count = state.get("reflection_count", 0)
+
+    # --- affective signal (reuse existing helper) ---
+    emotion, suggestion = get_synthetic_emotion_and_suggestion(
+        user_input, solved, reflection_count
+    )
+    state["student_emotion"] = emotion
+    state["affective_suggestion"] = suggestion
+
+    # --- hard close after two reflections ---
+
+    print(f"[SINGLE] solved={solved}, reflection_count={reflection_count}")
+    if solved and reflection_count >= 2:
+        state["final_response"] = "Great job! You solved it. Want to try another problem?"
+        state["next_agent"] = "FinalResponse"
+        return {
+            "final_response": state["final_response"],
+            "problem_solved": True,
+            "reflection_count": reflection_count,
+            "next_agent": "FinalResponse",
+            "student_emotion": emotion,
+            "affective_suggestion": suggestion,
+        }
+
+    # --- compound prompt ---
+    if solved and reflection_count == 0:
+        phase_instruction = (
+            "The student has just solved the problem. "
+            "Ask ONE sharp metacognitive reflection question about the key insight or strategy they used. "
+            "Do not give new mathematical content."
+        )
+    elif solved and reflection_count == 1:
+        phase_instruction = (
+            "This is the second and final reflection turn. "
+            "Briefly evaluate the student's previous reflection, point out any remaining misconception if present, "
+            "or give a short general strategy tip. Then close the mathematical part of the session."
+        )
+    else:
+        phase_instruction = (
+            "The problem is not yet solved. "
+            "Act as a Socratic mathematics tutor. Give the next useful micro-step or guiding question only. "
+            "Never reveal the full solution or the final numerical answer."
+        )
+
+    prompt = f"""You are a Socratic mathematics tutor. You handle mathematical guidance, light metacognitive support, and basic affective adaptation in a single role.
+
+CURRENT PROBLEM: {current_problem}
+
+Recent conversation:
+{history_str}
+
+Student just said: {user_input}
+
+Affective signal: emotion={emotion}, suggestion="{suggestion}"
+
+Current phase instruction:
+{phase_instruction}
+
+CORE RULES (do not violate):
+1. Stay Socratic. Never reveal the final answer or the next concrete numerical result. Only give guiding questions or point out what is wrong.
+2. Never treat any intermediate result (parentheses, partial fraction, sub-calculation) as the final answer. The student must complete the entire original problem.
+3. Before deciding the next step, mentally check:
+   - What has the student already correctly completed?
+   - Is there a recurring mistake?
+   - Am I about to ask them to redo something they already did correctly?
+   If a step was already done correctly, move forward. Do not regress.
+4. When the student makes errors, identify the most fundamental one first. Especially check signs on both sides of any equation transformation.
+5. Only set problem_solved = true when the student has given a numerically reasonable final answer that is consistent with the work in the history. If the answer looks wrong or incomplete, continue guiding.
+6. Keep responses concise (2–4 sentences). No full solutions.
+7. ABSOLUTE RULE – ZERO LaTeX: Never use $, \\(, \\[, \\frac, or any LaTeX. Write everything in plain text.
+
+Follow the phase instruction strictly.
+
+Respond with pure JSON only:
+{{
+  "final_response": "the message shown to the student",
+  "problem_solved": true/false
+}}"""
+
+    raw = generate_response(ORCHESTRATOR_MODEL, prompt, max_tokens=400)
+    data = extract_json(raw) or {}
+
+    final_response = data.get("final_response", "Let's continue.")
+    final_response = strip_latex(final_response)
+    new_solved = bool(data.get("problem_solved", False))
+
+    if state.get("problem_solved"):
+        # already solved → stay solved, only advance reflection count
+        state["reflection_count"] = state.get("reflection_count", 0) + 1
+    elif new_solved:
+        state["problem_solved"] = True
+        state["reflection_count"] = 0
+
+    state["final_response"] = final_response
+    state["next_agent"] = "SingleAgent"
+
+    # append tutor turn to history
+    state["history"].append(f"Tutor: {final_response}")
+
+    return {
+        "final_response": final_response,
+        "problem_solved": state["problem_solved"],
+        "reflection_count": state.get("reflection_count", 0),
+        "next_agent": "SingleAgent",
+        "student_emotion": emotion,
+        "affective_suggestion": suggestion,
+        "state": state,
+    }
+
+
 if __name__ == "__main__":
-    print("Math Tutoring System (v8 - Orchestrator improved) Started. Type 'quit' to exit.\n")
+    print("Math Tutoring System (ABLATION_MODE) Started. Type 'quit' to exit.\n")
+    trajectory_id = input("trajectory_id (e.g. struggle_01_run1): ").strip() or "interactive"
     state: TutorState = {
         "student_input": "", "student_emotion": "neutral", "progress": "beginning",
         "known_mistake": None, "history": [], "orchestrator_instruction": "",
         "math_tutor_reasoning": "", "metacognitive_strategy": "",
-        "final_response": "", "problem_solved": False, "reflection_count": 0, "next_agent": None, "current_problem": None
+        "final_response": "", "problem_solved": False, "reflection_count": 0, "next_agent": None, "current_problem": None, "trajectory_id": trajectory_id,
     }
     while True:
         user_input = input("Student: ")
         if user_input.lower() in ['quit', 'exit']:
             break
         state["student_input"] = user_input
-        result = graph.invoke(state)
-        state.update(result)
+        #result = graph.invoke(state)
+        result = process_student_turn(state, user_input)
+        state = result["state"]
+        print(result["response"])
     print("Session ended.")
