@@ -7,7 +7,8 @@ app = FastAPI(title="Multi-Agent Math Tutor API")
 
 class TurnRequest(BaseModel):
     student_input: str
-    state: Dict[str, Any]        
+    state: Dict[str, Any]
+    ablation_mode: Optional[str] = None        
 
 class TurnResponse(BaseModel):
     response: str
@@ -50,7 +51,7 @@ def run_turn(req: TurnRequest):
         if k not in state:
             state[k] = v
 
-    result = process_student_turn(state, req.student_input)
+    result = process_student_turn(state, req.student_input, ablation_mode=req.ablation_mode)
 
     return {
         "response": result.get("response") or result.get("final_response", ""),
@@ -64,4 +65,5 @@ def run_turn(req: TurnRequest):
         "math_tutor_reasoning": result.get("math_tutor_reasoning"),
         "metacognitive_strategy": result.get("metacognitive_strategy"),
         "state": result.get("state", result),
+        "ablation_mode":result.get("ablation_mode", result) 
     }
