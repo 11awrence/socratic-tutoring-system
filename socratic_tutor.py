@@ -160,7 +160,7 @@ def log_turn(
     """
     Append one turn record to logs/{ablation_mode}/{trajectory_id}.jsonl
     """
-    mode = ABLATION_MODE
+    mode = state.get("ablation_mode", ABLATION_MODE)
     mode_dir = os.path.join(LOG_DIR, mode)
     os.makedirs(mode_dir, exist_ok=True)
 
@@ -339,7 +339,8 @@ def state_manager_node(state: TutorState):
     return state
 
 def verification_node(state: TutorState):
-    if ABLATION_MODE != "multi_verifier":
+    mode = state.get("ablation_mode", ABLATION_MODE)
+    if mode != "multi_verifier":
         state["verification"] = {
             "parseable": False,
             "step_valid": None,
@@ -732,16 +733,21 @@ graph = workflow.compile()
 
 # ====================== INTERACTIVE ======================
 
-def process_student_turn(current_state: dict, user_input: str) -> dict:
+def process_student_turn(current_state: dict, user_input: str, ablation_mode=None) -> dict:
     """
     Clean wrapper around the LangGraph.
     Returns structured output for the UI.
     """
-    print(f"[MODE] ABLATION_MODE={ABLATION_MODE}")
+    mode = (ablation_mode or current_state.get("ablation_mode") or ABLATION_MODE).lower()
+    if mode not in ("single", "multi", "multi_verifier"):
+        mode = "multi_verifier"
+
+    current_state["ablation_mode"] = mode   
+    print(f"[MODE] ABLATION_MODE={mode}")
 
     current_state["student_input"] = user_input
     
-    if ABLATION_MODE == "single":
+    if mode == "single":
         result = run_single_agent(current_state, user_input)
         current_state.update(result)
     else:
