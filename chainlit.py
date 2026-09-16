@@ -1,4 +1,5 @@
 import chainlit as cl
+from chainlit.input_widget import Select
 import requests
 
 API_URL = "http://localhost:8000/turn"
@@ -25,10 +26,11 @@ def get_initial_state():
     }
 
 
-def call_tutor(user_input: str, current_state: dict) -> dict:
+def call_tutor(user_input: str, current_state: dict, ablation_mode: str) -> dict:
     payload = {
         "student_input": user_input,
         "state": current_state,
+        "ablation_mode": ablation_mode,
     }
     r = requests.post(API_URL, json=payload, timeout=120)
     r.raise_for_status()
@@ -36,6 +38,7 @@ def call_tutor(user_input: str, current_state: dict) -> dict:
 
 
 async def open_details_sidebar(state: dict, result: dict = None, show_debug: bool = False):
+    mode = ablation_mode
     emotion = (result or {}).get("emotion") or state.get("student_emotion", "neutral")
     suggestion = (result or {}).get("affective_suggestion") or state.get("affective_suggestion") or "-"
     current_problem = state.get("current_problem") or state.get("original_problem") or "None"
@@ -57,7 +60,14 @@ async def open_details_sidebar(state: dict, result: dict = None, show_debug: boo
             orch = log[:450] + ("..." if len(log) > 450 else "")
             break
 
+    mode = cl.user_session.get("ablation_mode", "multi_verifier")
+    if mode == "single":
+        orch = "n/a"
+        next_agent = "n/a"
+        specialist = "single-agent"
+
     content = (
+        f"### Mode: `{mode}`\n\n"
         "### Session Status\n"
         f"**Current Problem:** {current_problem}\n"
         f"**Reflection count:** {reflection}\n"
@@ -92,19 +102,34 @@ async def open_details_sidebar(state: dict, result: dict = None, show_debug: boo
 
 @cl.on_chat_start
 async def start():
-    state = get_initial_state()
-    cl.user_session.set("state", state)
+    await cl.ChatSettings(
+        [
+            Select(
+                id="ablation_mode",
+                label="Ablation mode",
+                values=["single", "multi", "multi_verifier"],
+                initial_index=2,  # multi_verifier
+            )
+        ]
+    ).send()
+
+    cl.user_session.set("ablation_mode", "multi_verifier")
+    cl.user_session.set("state", get_initial_state())
     cl.user_session.set("last_result", None)
     cl.user_session.set("show_debug", False)
 
-    actions = [
-        cl.Action(name="new_problem", payload={"value": "new"}, label="🔄 New Problem")
-    ]
-
     await cl.Message(
-        content="Hi! I'm your multi-agent math tutor. What would you like to work on?",
-        actions=actions,
+        content="Hi! I'm your math tutor. Pick an ablation mode in settings, then send a problem.",
+        actions=[cl.Action(name="new_problem", payload={"value": "new"}, label="🔄 New Problem")],
     ).send()
+
+@cl.on_settings_update
+async def on_settings_update(settings):
+    mode = settings["ablation_mode"]
+    cl.user_session.set("ablation_mode", mode)
+    cl.user_session.set("state", get_initial_state())
+    cl.user_session.set("last_result", None)
+    await cl.Message(content=f"Mode set to `{mode}`. Session reset.").send()
 
 
 @cl.action_callback("new_problem")
@@ -148,8 +173,10 @@ async def main(message: cl.Message):
     thinking = await cl.Message(content="Thinking…", author="Tutor").send()
     await thinking.send()
 
+    mode = cl.user_session.get("ablation_mode", "multi_verifier")
+
     try:
-        result = call_tutor(message.content, state)
+        result = call_tutor(message.content, state, mode)
         state = result["state"]
         cl.user_session.set("state", state)
         cl.user_session.set("last_result", result)
