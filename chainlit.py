@@ -38,7 +38,6 @@ def call_tutor(user_input: str, current_state: dict, ablation_mode: str) -> dict
 
 
 async def open_details_sidebar(state: dict, result: dict = None, show_debug: bool = False):
-    mode = ablation_mode
     emotion = (result or {}).get("emotion") or state.get("student_emotion", "neutral")
     suggestion = (result or {}).get("affective_suggestion") or state.get("affective_suggestion") or "-"
     current_problem = state.get("current_problem") or state.get("original_problem") or "None"
@@ -125,6 +124,11 @@ async def start():
 
 @cl.on_settings_update
 async def on_settings_update(settings):
+    state = cl.user_session.get("state") or {}
+    if state.get("history"):
+        await cl.Message(content="Finish this item or click New Problem before changing mode.").send()
+        return
+
     mode = settings["ablation_mode"]
     cl.user_session.set("ablation_mode", mode)
     cl.user_session.set("state", get_initial_state())
