@@ -910,7 +910,7 @@ Respond with pure JSON only:
         "next_agent": "SingleAgent",
         "student_emotion": emotion,
         "affective_suggestion": suggestion,
-        "state": state,
+        #"state": state,
     }
 
 
