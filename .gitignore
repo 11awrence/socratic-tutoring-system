@@ -28,3 +28,4 @@ site/
 .files/
 requirements-lock.txt
 .chainlit/
+!.chainlit/config.toml
