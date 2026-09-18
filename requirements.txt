@@ -17,3 +17,4 @@ mlx-lm==0.31.3
 
 # Utilities
 python-dotenv==1.2.2
+sympy>=1.13
