@@ -65,5 +65,5 @@ def run_turn(req: TurnRequest):
         "math_tutor_reasoning": result.get("math_tutor_reasoning"),
         "metacognitive_strategy": result.get("metacognitive_strategy"),
         "state": result.get("state", result),
-        "ablation_mode":result.get("ablation_mode", result) 
+        "ablation_mode": (result.get("state") or result).get("ablation_mode"), 
     }
