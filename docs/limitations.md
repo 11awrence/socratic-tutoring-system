@@ -69,6 +69,10 @@ Once two reflection turns are completed, the system ends the session. This stabi
 An earlier verification layer was removed because it conflicted with fluent tutoring behaviour.  
 The current system therefore relies mainly on prompt-level judgements rather than an independent check of final answers.
 
+## Hardware limitation
+
+The system runs on Apple Silicon which is a real constraint of the current prototype.
+
 ## Reflection
 
 The prototype suggests that a multi-agent architecture is a meaningful direction for dialogue-based tutoring. Separating Socratic guidance, metacognitive reflection, and affective signalling already creates a more structured learning interaction than a single undifferentiated tutor model.

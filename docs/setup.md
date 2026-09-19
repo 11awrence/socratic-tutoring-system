@@ -8,6 +8,16 @@ This page explains how to run the current prototype locally.
 - Apple Silicon recommended if using the local MLX backend
 - The models expected by `socratic_tutor.py` already available on the machine
 
+## Hardware requirements
+
+This version runs on Apple Silicon using MLX.  
+It is currently not supported on other platforms. Users on non-Apple hardware will need to adapt the model loading code.
+
+## Models
+
+- Orchestrator / MathTutor / Metacognitive: Qwen3.5-122B-A10B-4bit
+- Affective: Qwen2.5-3B
+
 ## Installation
 
 ```bash

@@ -2,15 +2,16 @@
 
 This page walks through a typical tutoring session and shows what the system surfaces to the user.
 
-## Typical tutoring session
+## Typical tutoring session (multi_verifier mode)
 
 1. The student submits a math problem.
 2. The system detects a new problem and resets relevant state.
-3. The Affective agent produces a lightweight emotion + suggestion signal.
-4. The Orchestrator decides the next focus and routes to the MathTutor.
-5. The MathTutor generates a Socratic micro-step.
-6. The Final Response node polishes that step into a short student-facing message.
-7. Once the problem is considered solved, the Metacognitive agent runs for up to two reflection turns.
+3. The SymPy parses the problem and registers mathematical signal.
+3. The Learner-support (Affective) Signal produces a lightweight emotion + suggestion signal.
+4. The Orchestrating Agent decides the next focus and routes to the MathTutor.
+5. The Math Reasoning Agent generates a Socratic micro-step.
+6. The `FinalResponse` node polishes that step into a short student-facing message.
+7. Once the problem is considered solved, the Metacognitive Support agent runs for up to two reflection turns.
 8. The session closes with an invitation to try another problem.
 
 <figure>
@@ -27,11 +28,19 @@ This is a pragmatic mechanism rather than a robust problem-segmentation model.
 
 ## Example interaction
 
+Before the session starts, the student needs to select a mode from the chooser. The default is "multi_verifier"
+
+<figure>
+  <img src="../assets/mode_setting.png" alt="Main chat interface" width="600">
+  <figcaption>Main chat interface with learner interaction.</figcaption>
+</figure>
+
+
 A typical early exchange looks like this:
 
-**Student:** How do I solve 2x + 3 = -2x - 6?
+**Student:** How do I solve 3/4 - 1/6?
 
-**Tutor:** Try adding 2x to both sides to group the variable terms. What does the equation look like after you do that?
+**Tutor:** To subtract these fractions, what is the smallest number that both 4 and 6 divide into evenly?
 
 The system continues with short Socratic prompts rather than full solutions, unless the student is reflecting after a completed answer.
 
@@ -45,6 +54,7 @@ The system continues with short Socratic prompts rather than full solutions, unl
 The Chainlit interface keeps the main chat focused on the tutoring dialogue.  
 Additional information is available on demand through the side panel:
 
+- **Mode:** — `multi_verifier`/`multi`/'single'
 - **Session status** — current problem, reflection count, solved state
 - **Affective state** — detected emotion and suggestion
 - **Agent activity** — Orchestrator plan and specialist output
