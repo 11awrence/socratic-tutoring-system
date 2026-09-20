@@ -33,7 +33,7 @@ uvicorn api:app --port 8000
 chainlit run chainlit.py --port 8001
 ```
 
-`TEMPERATURE=0` and `SEED=42`match the reported runs. `PROVIDER=openai` is a stub
+`TEMPERATURE=0` and `SEED=42`match the reported runs. `PROVIDER=openai` is a stub.
 
 ### Hardware Notes
 
