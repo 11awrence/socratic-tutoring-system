@@ -10,13 +10,12 @@ This page explains how to run the current prototype locally.
 
 ## Hardware requirements
 
-This version runs on Apple Silicon using MLX.  
-It is currently not supported on other platforms. Users on non-Apple hardware will need to adapt the model loading code.
+This version runs on Apple Silicon using MLX. 
 
 ## Models
 
-- Orchestrator / MathTutor / Metacognitive: Qwen3.5-122B-A10B-4bit
-- Affective: Qwen2.5-3B
+- Orchestrator / MathTutor / Metacognitive: [Qwen3.5-122B-A10B-4bit](https://huggingface.co/mlx-community/Qwen3.5-122B-A10B-4bit)
+- Affective: [Qwen2.5-3B](https://huggingface.co/Qwen/Qwen2.5-3B-Instruct)
 
 ## Installation
 
@@ -28,12 +27,33 @@ python -m venv .venv
 source .venv/bin/activate  # Windows: .venv\Scripts\activate
 
 pip install -r requirements.txt
+
+cp .env.example .env # set ORCHESTRATOR_MODEL and AFFECTIVE_MODEL
+```
+
+For conda environment
+```bash
+git clone https://github.com/11awrence/socratic-tutoring-system.git
+cd socratic-tutoring-system
+
+conda create -n tutor_env python=3.10
+conda activate tutor_env
+pip install -r requirements.txt
+
+cp .env.example .env
+# set ORCHESTRATOR_MODEL and AFFECTIVE_MODEL
 ```
 
 ## Running the system
 
-The system is split into an API backend and a Chainlit frontend.
-Run them in two separate terminals.
+The system is split into an API backend and a Chainlit frontend. 
+You can run the system with run.sh if you are using conda environment:
+```bash
+conda activate tutor_env
+bash run.sh
+```
+
+If not, you can use two terminals:
 
 ### Terminal 1 — API
 
@@ -53,15 +73,13 @@ http://localhost:8001
 ```
 
 ## Notes
-- The backend expects local MLX models. If you are not on Apple Silicon, the model-loading code will need to be adapted.
+- The backend expects local MLX models if `PROVIDER=mlx`. If you are not on Apple Silicon, the model-loading code will need to be adapted.
 - The frontend talks to the API through http://localhost:8000/turn.
 - Use New Problem in the UI to reset a session cleanly during testing.
+- `PROVIDER=openai` / `mock` exist in `.env` OpenAI is a placeholder unless you implement the API call in generate_response. mock needs no model. Neither was used for the ablation.
 
 ## Project layout
 - socratic_tutor.py — LangGraph multi-agent backend
 - api.py — FastAPI endpoint
 - chainlit.py — Chainlit UI
-- app.py — optional alternative frontend entry
-
-Once this is in, the documentation skeleton is complete.  
-Then you can push the docs and, if you want, set up GitHub Pages later.
+- .env.example - environment for setting up local or cloud models
